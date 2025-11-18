@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dragon Ball - Juego 2D (fanmade)</title>
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        font-family: Arial, sans-serif;
+      }
+      .menu-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+      }
+      .menu-overlay.hidden {
+        display: none;
+      }
+      .menu-content {
+        text-align: center;
+        color: white;
+      }
+      .menu-content h1 {
+        color: #FFD700;
+        font-size: 3em;
+        text-shadow: 2px 2px 4px #000;
+        margin: 20px 0;
+      }
+      .menu-content .subtitle {
+        color: #FF6B6B;
+        font-size: 1.5em;
+        margin-bottom: 40px;
+      }
+      .play-btn {
+        background: linear-gradient(135deg, #FF6B6B, #FF1493);
+        color: white;
+        font-size: 1.5em;
+        padding: 15px 50px;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(255, 20, 147, 0.4);
+        text-transform: uppercase;
+        font-weight: bold;
+      }
+      .play-btn:hover {
+        transform: scale(1.1);
+        box-shadow: 0 6px 20px rgba(255, 20, 147, 0.6);
+      }
+      .play-btn:active {
+        transform: scale(0.95);
+      }
+      .info {
+        color: #ccc;
+        font-size: 0.9em;
+        margin-top: 30px;
+      }
+      .canvas-container {
+        position: relative;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas-container">
+      <canvas id="gameCanvas" width="880" height="480"></canvas>
+      <div class="menu-overlay" id="menuOverlay">
+        <div class="menu-content">
+          <h1>DRAGON BALL</h1>
+          <div class="subtitle">SUPER</div>
+          <p class="info">Juego 2D Fanmade</p>
+          <button class="play-btn" onclick="iniciarJuego()">JUGAR</button>
+          <div class="info">
+            <p><strong>Controles:</strong></p>
+            <p>A/D (mover) • W/Space (saltar) • Z (disparo) • Q (transformación) • E (golpe)</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio para música de fondo -->
+    <audio id="bgMusic" loop style="display:none;">
+      <!-- Agrega aquí tu archivo MP3: <source src="music/dbsuper.mp3" type="audio/mpeg"> -->
+    </audio>
+
+    <script>
+      function iniciarJuego() {
+        // Ocultar menú y simular presionar ENTER
+        document.getElementById('menuOverlay').classList.add('hidden');
+        // Simular presión de Enter
+        const event = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          code: 'Enter',
+          keyCode: 13
+        });
+        window.dispatchEvent(event);
+      }
+    </script>
+    <script src="main.js" defer></script>
+  </body>
+</html>
