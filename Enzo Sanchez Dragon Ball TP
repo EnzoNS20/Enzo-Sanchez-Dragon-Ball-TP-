@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Dragon Ball - Juego 2D (fanmade)</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h1>Dragon Ball - Juego 2D (fanmade)</h1>
+    <p class="help">Controles: ← → mover • W o Espacio saltar • Z atacar (ki)</p>
+    <canvas id="gameCanvas" width="880" height="480"></canvas>
+    <!-- Audio para música de fondo (reemplaza con tu propia canción) -->
+    <audio id="bgMusic" loop style="display:none;">
+      <!-- Agrega aquí tu archivo MP3: <source src="music/dbsuper.mp3" type="audio/mpeg"> -->
+    </audio>
+    <script src="main.js" defer></script>
+  </body>
+</html>
