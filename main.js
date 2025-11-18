@@ -1,0 +1,769 @@
+// Juego 2D simple en canvas — fanmade, sin assets oficiales
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const bgMusic = document.getElementById('bgMusic');
+
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+
+// Estado del juego (menú o juego)
+let gameState = 'menu'; // 'menu' o 'playing'
+
+// Web Audio API para música
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let menuMusicPlaying = false;
+
+// Controles
+const keys = {};
+// tecla press state (para detectar carga de Z) y ataques con E
+window.addEventListener('keydown', e=>{
+  const k = e.key.toLowerCase();
+  // registrar como presionada
+  keys[k] = true;
+  // tecla ENTER en menú para jugar
+  if(gameState === 'menu' && e.key === 'Enter'){
+    gameState = 'playing';
+    if(bgMusic.paused) bgMusic.play().catch(() => {});
+  }
+  // detectar inicio de carga del Z (solo cuando se presiona la primera vez)
+  if(k === 'z'){
+    if(player && player.hp > 0){
+      if(!player._zPressed){
+        player._zPressed = true;
+        player._zStart = Date.now();
+      }
+    }
+  }
+  // E: Ataque melee (golpe cuerpo a cuerpo)
+  if(k === 'e' && player && player.hp > 0){
+    const now = Date.now();
+    if(!player._lastMelee || (now - player._lastMelee) > player.meleeCooldown){
+      player._lastMelee = now;
+      player._meleeActive = true;
+      player._meleeActiveUntil = now + 140;
+
+      // Calcular daño melee según transformación
+      const transformMults = { normal: 1, ssj1: 1.5, ssj2: 2.0, ssj3: 2.8, ssjgod: 3.2, ssjblue: 3.8 };
+      const transformMult = transformMults[player.transformation || 'normal'] || 1;
+      const meleeDmg = player.meleeDamage * transformMult;
+
+      // aplicar daño a enemigos en rango y en la dirección del jugador
+      for(let j=enemies.length-1;j>=0;j--){
+        const en = enemies[j];
+        if(!en || en._defeated) continue;
+        const playerCenterX = player.x + player.w/2;
+        const enemyCenterX = en.x + en.w/2;
+        const dx = enemyCenterX - playerCenterX;
+        if(player.facing * dx > 0 && Math.abs(dx) <= player.meleeRange){
+          en.hp -= meleeDmg;
+          score += 80;
+          if(en.hp <= 0 && !en._defeated){
+            en._defeated = true;
+            score += en.score;
+            // Spawnar semilla de Enseña con probabilidad
+            if(Math.random() < 0.4){
+              seeds.push({ x: en.x + en.w/2, y: en.y, vx: 0, vy: -3, r: 6, healing: 30, _collected: false });
+            }
+          }
+        }
+      }
+    }
+  }
+  // Q: Ciclar transformaciones Super Saiyajín (todas las formas)
+  if(k === 'q' && player && player.energy >= 50 && player.hp > 0){
+    const now = Date.now();
+    if(!player._lastTransform || now - player._lastTransform > 800){
+      const forms = ['normal', 'ssj1', 'ssj2', 'ssj3', 'ssjgod', 'ssjblue'];
+      const currentIndex = forms.indexOf(player.transformation || 'normal');
+      const nextIndex = (currentIndex + 1) % forms.length;
+      player.transformation = forms[nextIndex];
+      player._lastTransform = now;
+      player.energy = Math.max(0, player.energy - 50);
+    }
+  }
+});
+window.addEventListener('keyup', e=>{
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  // al soltar Z, calcular duración y lanzar ataque cargado o disparo corto
+  if(k === 'z' && player && player._zPressed){
+    // solo permitir crear el ataque si el jugador está con vida
+    if(player.hp > 0){
+      const dur = Date.now() - (player._zStart || 0);
+      player._zPressed = false;
+      player._zStart = 0;
+      // umbral para carga (ms)
+      if(dur >= 500 && player.energy >= 30){
+        // Genkidama: ataque cargado — crear una gran esfera que viaja y da daño masivo
+        const charge = Math.min(1.8, 0.8 + (dur / 1200));
+        const r = Math.round(16 * charge);
+        const speed = 5 + 2 * (charge - 0.8);
+        // crear blast tipo genki
+        blasts.push({ x: player.x + player.w/2 + player.facing*30, y: player.y + 24, vx: speed*player.facing, r: r, owner: 'player', genki: true, damage: 48 * charge });
+        player.energy = Math.max(0, player.energy - 30);
+        player._lastBlast = Date.now();
+      } else {
+        // disparo corto (comportamiento previo) — pequeño blast instantáneo
+        if(!player._lastBlast || Date.now()-player._lastBlast>200){
+          blasts.push({ x: player.x + player.w/2 + player.facing*26, y: player.y+24, vx: 6*player.facing, r:8, owner:'player' });
+          player.energy = Math.max(0, player.energy - 10);
+          player._lastBlast = Date.now();
+        }
+      }
+    } else {
+      // limpiar flags si está muerto
+      player._zPressed = false;
+      player._zStart = 0;
+    }
+  }
+});
+
+// Util
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+// Jugador
+const player = {
+  name: 'Gohan',
+  x: 120, y: HEIGHT-110, vx:0, vy:0, w:48, h:64,
+  onGround:false, facing:1, hp:100, maxHp:100, energy:100, maxEnergy:100,
+  color:'#ff9933',
+  flying:false, flyingUntil:0, flySpeed:5,
+  _lastKame: 0,
+  transformation: 'normal',
+  _lastTransform: 0
+};
+
+// estado vivo/muerto
+player.alive = true;
+
+// melee (ataque cuerpo a cuerpo)
+player.meleeDamage = 28;
+player.meleeRange = 48; // px desde el centro del jugador hacia delante
+player.meleeCooldown = 600; // ms
+player._lastMelee = 0;
+player._meleeActive = false;
+player._meleeActiveUntil = 0;
+
+// Proyectiles
+const blasts = [];
+
+// Proyectiles de enemigos
+const enemyShots = [];
+
+// Semillas de Enseña (powerups de vida)
+const seeds = [];
+
+// Puntuación
+let score = 0;
+// Mejor puntuación persistente y última puntuación
+let highScore = parseInt(localStorage.getItem('db_highscore') || '0', 10) || 0;
+let lastScore = 0;
+// bandera para procesar la pantalla de game over una sola vez
+let gameOverHandled = false;
+
+// Sistema de fondos (universos Dragon Ball)
+let enemiesDefeated = 0;
+const backgrounds = [
+  { name: 'Tierra', colors: ['#87CEEB', '#E0F6FF'], sun: '#FFD700' },
+  { name: 'Namek', colors: ['#2d5016', '#1a3009'], sun: '#90EE90' },
+  { name: 'Planeta Vegeta', colors: ['#1a1a2e', '#16213e'], sun: '#FF6B6B' },
+  { name: 'Kaio Shin Kai', colors: ['#E6B0FF', '#D4A0FF'], sun: '#FFB3D9' },
+  { name: 'Universo 6', colors: ['#003d66', '#001f33'], sun: '#00FFFF' }
+];
+let currentBG = 0;
+
+// Enemigos múltiples (placeholders inspirados en la estética de Dragon Ball)
+// Nota: estos son solo rectángulos de prueba; si quieres sprites, súbelos y los integro.
+const enemies = [];
+
+const enemyTypes = {
+  grunt: { name: 'Soldado', w:40, h:56, hp:50, vx:0.5, color:'#6fb3ff', score: 150 },
+  pirate: { name: 'Pirata', w:48, h:64, hp:80, vx:0.6, color:'#9ad0ff', score: 250 },
+  saibaman: { name: 'Saibaman', w:36, h:52, hp:40, vx:0.8, color:'#7cff86', score: 200 }
+};
+
+function spawnEnemy(typeKey, x){
+  const t = enemyTypes[typeKey];
+  if(!t) return;
+  enemies.push({ x: x ?? WIDTH - 80, y: HEIGHT-30 - t.h, w: t.w, h: t.h, vx: t.vx, hp: t.hp, maxHp: t.hp, color: t.color, type: typeKey, score: t.score, _defeated: false, _lastHit: 0,
+    // comportamiento de ataque por enemigo
+    attackDamage: 10,
+    attackRange: 44,
+    attackCooldown: 1100,
+    _lastAttack: 0,
+    _attacking: false,
+    _attackUntil: 0
+  });
+}
+
+// spawner periódido
+let _lastSpawn = 0;
+const SPAWN_INTERVAL = 2200; // ms
+
+// Física
+const GRAVITY = 0.9;
+
+function update(dt){
+  // input
+  if(keys['arrowleft'] || keys['a']){ player.vx = -3; player.facing = -1; }
+  else if(keys['arrowright'] || keys['d']){ player.vx = 3; player.facing = 1; }
+  else player.vx = 0;
+
+  // W o Espacio: saltar o volar
+  if((keys['w'] || keys[' ']) && player.onGround){ player.vy = -13; player.onGround=false; }
+  else if((keys['w'] || keys[' ']) && !player.onGround){
+    // mantener en vuelo: velocidad vertical negativa (hacia arriba)
+    player.vy = -player.flySpeed;
+    player.flying = true;
+    player.flyingUntil = Date.now() + 100;
+  }
+
+
+  // ataques solo si el jugador está vivo
+  const _playerAlive = player.hp > 0;
+  if(_playerAlive){
+    // ataque (ataque rápido con Z si se mantiene)
+    if(keys['z'] && player.energy>=20){
+      // generar blast
+      if(!player._lastBlast || Date.now()-player._lastBlast>300){
+        const transformMults = { normal: 1, ssj1: 1.3, ssj2: 1.8, ssj3: 2.3, ssjgod: 2.6, ssjblue: 3.2 };
+        const transformMult = transformMults[player.transformation || 'normal'] || 1;
+        blasts.push({ x: player.x + player.w/2 + player.facing*26, y: player.y+24, vx: 6*player.facing, r:8, owner:'player', damage: 12 * transformMult });
+        player.energy -= 20; player._lastBlast = Date.now();
+      }
+    }
+  }
+
+  // ataque cuerpo a cuerpo (E)
+  if(_playerAlive && keys['e']){
+    const now = Date.now();
+    if(!player._lastMelee || (now - player._lastMelee) > player.meleeCooldown){
+      player._lastMelee = now;
+      player._meleeActive = true;
+      player._meleeActiveUntil = now + 140; // animación breve
+
+      // Calcular daño melee según transformación
+      const transformMults = { normal: 1, ssj1: 1.5, ssj2: 2.0, ssj3: 2.8, ssjgod: 3.2, ssjblue: 3.8 };
+      const transformMult = transformMults[player.transformation || 'normal'] || 1;
+      const meleeDmg = player.meleeDamage * transformMult;
+
+      // aplicar daño a enemigos en rango y en la dirección del jugador
+      for(let j=enemies.length-1;j>=0;j--){
+        const en = enemies[j];
+        if(!en || en._defeated) continue;
+        const playerCenterX = player.x + player.w/2;
+        const enemyCenterX = en.x + en.w/2;
+        const dx = enemyCenterX - playerCenterX;
+        if(player.facing * dx > 0 && Math.abs(dx) <= player.meleeRange){
+          en.hp -= meleeDmg;
+          score += 80; // puntos por golpe melee
+          if(en.hp <= 0 && !en._defeated){ en._defeated = true; score += en.score; }
+        }
+      }
+    }
+  }
+
+  // desactivar animación melee cuando vence el tiempo
+  if(player._meleeActive && Date.now() > player._meleeActiveUntil){ player._meleeActive = false; }
+
+  // aplicar gravedad y movimiento
+  player.vy += GRAVITY * (dt/16);
+  player.x += player.vx * (dt/16);
+  player.y += player.vy * (dt/16);
+
+  // suelo
+  if(player.y + player.h > HEIGHT-30){ player.y = HEIGHT-30 - player.h; player.vy = 0; player.onGround = true; }
+
+  // límites
+  player.x = clamp(player.x, 10, WIDTH - player.w - 10);
+
+  // recargar energía pasivamente (lento)
+  player.energy = clamp(player.energy + 0.08*(dt/16), 0, player.maxEnergy);
+
+  // limpiar estado de vuelo si se suelta W/Espacio
+  if(!keys['w'] && !keys[' ']){
+    player.flying = false;
+  }
+
+  // actualiza blasts
+  for(let i=blasts.length-1;i>=0;i--){
+    const b = blasts[i]; b.x += b.vx * (dt/16);
+    // fuera de pantalla
+    if(b.x < -20 || b.x > WIDTH+20) blasts.splice(i,1);
+    else{
+      // colisión contra cualquiera de los enemigos
+      if(b.owner==='player'){
+        for(let j=enemies.length-1;j>=0;j--){
+          const en = enemies[j];
+          if(en && !en._defeated && rectCircleColl(en,b)){
+            // daño distinto si es genki
+            const dmg = b.genki ? Math.round(b.damage) : 12;
+            en.hp -= dmg;
+            blasts.splice(i,1);
+            score += b.genki ? Math.round(200 * (b.r/16)) : 100;
+            if(en.hp <= 0 && !en._defeated){
+              en._defeated = true;
+              score += en.score; // bonificación por tipo
+              enemiesDefeated++;
+              // Spawnar semilla de Enseña con probabilidad
+              if(Math.random() < 0.4){
+                seeds.push({ x: en.x + en.w/2, y: en.y, vx: 0, vy: -3, r: 6, healing: 30, _collected: false });
+              }
+              // cambiar fondo cada 3 enemigos derrotados
+              if(enemiesDefeated % 3 === 0 && currentBG < backgrounds.length - 1){
+                currentBG++;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // actualizar disparos de enemigos
+  for(let i=enemyShots.length-1;i>=0;i--){
+    const s = enemyShots[i];
+    s.x += s.vx * (dt/16);
+    s.y += s.vy * (dt/16);
+    // fuera
+    if(s.x < -40 || s.x > WIDTH+40 || s.y < -40 || s.y > HEIGHT+40) { enemyShots.splice(i,1); continue; }
+    // colisión con jugador
+    if(rectCircleColl(player, s)){
+      player.hp -= s.damage || 8;
+      enemyShots.splice(i,1);
+    }
+  }
+
+  // actualizar semillas de Enseña (powerups)
+  for(let i=seeds.length-1;i>=0;i--){
+    const seed = seeds[i];
+    seed.x += seed.vx * (dt/16);
+    seed.y += seed.vy * (dt/16);
+    seed.vy += GRAVITY * (dt/16); // gravedad
+    // fuera de pantalla
+    if(seed.y > HEIGHT+20) { seeds.splice(i,1); continue; }
+    // colisión con jugador
+    if(rectCircleColl(player, seed)){
+      player.hp = Math.min(player.maxHp, player.hp + seed.healing);
+      seeds.splice(i,1);
+    }
+  }
+
+  // actualiza enemigos
+  // spawn automático
+  if(!_lastSpawn || Date.now() - _lastSpawn > SPAWN_INTERVAL){
+    // elegir tipo aleatorio
+    const keys = Object.keys(enemyTypes);
+    const type = keys[Math.floor(Math.random()*keys.length)];
+    const spawnX = WIDTH - 40;
+    spawnEnemy(type, spawnX);
+    _lastSpawn = Date.now();
+  }
+
+  for(let i=enemies.length-1;i>=0;i--){
+    const en = enemies[i];
+    if(!en) continue;
+    if(en._defeated) continue;
+    const dir = player.x < en.x ? -1 : 1;
+    en.x += en.vx * (dt/16) * dir;
+    // colisión cuerpo a cuerpo
+    // si está lo bastante cerca, puede atacar (IA simple)
+    const px = player.x + player.w/2;
+    const ex = en.x + en.w/2;
+    const dist = Math.abs(px - ex);
+    const now = Date.now();
+    if(dist <= en.attackRange){
+      if(!en._lastAttack || (now - en._lastAttack) > en.attackCooldown){
+        // iniciar ataque
+        en._lastAttack = now;
+        en._attacking = true;
+        en._attackUntil = now + 220; // duración visual del ataque
+        // aplicar daño al jugador
+        player.hp -= en.attackDamage;
+        // empujar ligeramente al jugador
+        player.vx += (px < ex) ? -3 : 3;
+      }
+    }
+    // si el enemigo puede disparar (ej. pirate), lanzar proyectiles hacia el jugador
+    if(en.type === 'pirate'){
+      if(!en._lastShot) en._lastShot = 0;
+      if(now - en._lastShot > 1400){
+        const dx = (player.x + player.w/2) - (en.x + en.w/2);
+        const dy = (player.y + player.h/2) - (en.y + en.h/2);
+        const distp = Math.max(1, Math.hypot(dx, dy));
+        const speed = 4.2;
+        const vx = (dx/distp) * speed;
+        const vy = (dy/distp) * (speed*0.3); // ligero arco
+        enemyShots.push({ x: en.x + en.w/2, y: en.y + en.h/2, vx: vx, vy: vy, r:6, damage: 10, owner: 'enemy' });
+        en._lastShot = now;
+      }
+    }
+    // limpiar bandera de ataque según tiempo
+    if(en._attacking && now > en._attackUntil){ en._attacking = false; }
+    // colisión cuerpo a cuerpo (daño de contacto reducido y con cooldown por daño recibido)
+    if(rectsOverlap(player, en)){
+      if(!en._lastHit || Date.now()-en._lastHit>700){ player.hp -= 4; en._lastHit = Date.now(); }
+    }
+  }
+
+  // actualizar bandera alive
+  player.alive = player.hp > 0;
+
+}
+
+function rectsOverlap(a,b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function rectCircleColl(rect, circle){
+  // circle: {x,y,r}
+  const cx = clamp(circle.x, rect.x, rect.x+rect.w);
+  const cy = clamp(circle.y, rect.y, rect.y+rect.h);
+  const dx = circle.x - cx; const dy = circle.y - cy;
+  return (dx*dx + dy*dy) <= circle.r*circle.r;
+}
+
+function draw(){
+  // fondo dinámico con gradiente
+  const bg = backgrounds[currentBG];
+  const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  gradient.addColorStop(0, bg.colors[0]);
+  gradient.addColorStop(1, bg.colors[1]);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  // sol/estrella en el fondo
+  ctx.fillStyle = bg.sun;
+  ctx.beginPath();
+  ctx.arc(WIDTH - 60, 50, 40, 0, Math.PI*2);
+  ctx.fill();
+
+  // suelo
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(0, HEIGHT-30, WIDTH, 30);
+
+  // jugador
+  drawPlayer(player);
+
+  // dibujar animación melee breve si activo
+  if(player._meleeActive){
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,200,60,0.85)';
+    const mx = player.facing>0 ? player.x + player.w : player.x - player.meleeRange;
+    const mw = player.meleeRange;
+    const my = player.y + 16;
+    const mh = player.h - 24;
+    ctx.fillRect(mx, my, player.facing>0 ? mw : -mw, mh);
+    ctx.restore();
+  }
+
+  // dibujar enemigos
+  for(const en of enemies){
+    if(!en) continue;
+    if(en._defeated){
+      ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.font = '14px Arial'; ctx.fillText('Derrotado', en.x-4, en.y+en.h/2);
+      continue;
+    }
+    ctx.fillStyle = en.color; ctx.fillRect(en.x, en.y, en.w, en.h);
+    // barra de HP pequeña sobre enemigo
+    ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(en.x, en.y-8, en.w, 6);
+    ctx.fillStyle = '#d32f2f'; ctx.fillRect(en.x+1, en.y-7, Math.max(0, (en.hp/en.maxHp)*(en.w-2)), 4);
+    // animación de ataque (breve destello rojo delante del enemigo)
+    if(en._attacking){
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,80,80,0.9)';
+      const attackW = 26;
+      const ax = (player.x + player.w/2) < (en.x + en.w/2) ? en.x - attackW : en.x + en.w;
+      ctx.fillRect(ax, en.y + 6, attackW, en.h - 12);
+      ctx.restore();
+    }
+  }
+
+  // blasts
+  for(const b of blasts){ ctx.beginPath(); ctx.fillStyle = '#ffd54d'; ctx.arc(b.x, b.y, b.r, 0, Math.PI*2); ctx.fill(); }
+
+  // disparos enemigos
+  for(const s of enemyShots){ ctx.beginPath(); ctx.fillStyle = '#ff6666'; ctx.arc(s.x, s.y, s.r || 6, 0, Math.PI*2); ctx.fill(); }
+
+  // semillas de Enseña (powerups)
+  for(const seed of seeds){
+    // dibujar semilla como verde pequeña con brillo
+    ctx.beginPath();
+    ctx.fillStyle = '#00cc00';
+    ctx.arc(seed.x, seed.y, seed.r, 0, Math.PI*2);
+    ctx.fill();
+    // destello blanco
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.arc(seed.x - 2, seed.y - 2, seed.r * 0.4, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // HUD
+  drawHUD();
+}
+
+function drawPlayer(p){
+  // Definir colores y propiedades según transformación
+  const transformations = {
+    normal: { bodyColor: '#ff9933', auraColor: 'rgba(255, 200, 60, 0.3)', meleeMult: 1, attackMult: 1, label: 'Gohan' },
+    ssj1: { bodyColor: '#FFD700', auraColor: 'rgba(255, 215, 0, 0.6)', meleeMult: 1.5, attackMult: 1.3, label: 'SSJ1' },
+    ssj2: { bodyColor: '#FFFF00', auraColor: 'rgba(255, 255, 0, 0.8)', meleeMult: 2.0, attackMult: 1.8, label: 'SSJ2' },
+    ssj3: { bodyColor: '#FFA500', auraColor: 'rgba(255, 165, 0, 0.9)', meleeMult: 2.8, attackMult: 2.3, label: 'SSJ3' },
+    ssjgod: { bodyColor: '#FF1493', auraColor: 'rgba(255, 20, 147, 0.8)', meleeMult: 3.2, attackMult: 2.6, label: 'SSJ God' },
+    ssjblue: { bodyColor: '#1E90FF', auraColor: 'rgba(30, 144, 255, 0.9)', meleeMult: 3.8, attackMult: 3.2, label: 'SSJ Blue' }
+  };
+  const trans = transformations[p.transformation] || transformations.normal;
+  
+  // simple body (sin usar assets): cabeza + cuerpo
+  // cuerpo
+  ctx.fillStyle = trans.bodyColor; ctx.fillRect(p.x, p.y+16, p.w, p.h-16);
+  // cabeza
+  ctx.fillStyle = '#ffd9b3'; ctx.fillRect(p.x+8, p.y, p.w-16, 22);
+  
+  // aura según transformación
+  if(p.flying || p.transformation !== 'normal'){
+    ctx.save();
+    ctx.strokeStyle = trans.auraColor;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(p.x + p.w/2, p.y + p.h/2, p.w/2 + 8, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  
+  // aura adicional pulsante para SSJ2 y superiores
+  if(['ssj2', 'ssj3', 'ssjgod', 'ssjblue'].includes(p.transformation)){
+    const pulse = Math.sin(Date.now() / 150) * 2;
+    ctx.save();
+    ctx.strokeStyle = trans.auraColor;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.arc(p.x + p.w/2, p.y + p.h/2, p.w/2 + 12 + pulse, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  
+  // aura triple pulsante para SSJ Blue
+  if(p.transformation === 'ssjblue'){
+    const pulse2 = Math.sin(Date.now() / 200) * 3;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0, 191, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.arc(p.x + p.w/2, p.y + p.h/2, p.w/2 + 16 + pulse2, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawHUD(){
+  // HP
+  ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(12,12,220,28);
+  ctx.fillStyle = '#d32f2f'; ctx.fillRect(14,14,(player.hp/player.maxHp)*216,24);
+  ctx.fillStyle = '#fff'; ctx.font='14px Arial'; ctx.fillText(`HP: ${Math.max(0,Math.round(player.hp))}`, 18, 32);
+
+  // energy
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(12,46,220,18);
+  ctx.fillStyle = '#ffd54d'; ctx.fillRect(14,48, (player.energy/player.maxEnergy)*216, 14);
+  ctx.fillStyle = '#fff'; ctx.font='12px Arial'; ctx.fillText(`Ki: ${Math.round(player.energy)}/${player.maxEnergy}`, 18, 60);
+
+  // Mostrar transformación actual
+  const transformLabels = { normal: 'Gohan', ssj1: 'SSJ1', ssj2: 'SSJ2', ssj3: 'SSJ3', ssjgod: 'SSJ God', ssjblue: 'SSJ Blue' };
+  const transformMults = { normal: '1x', ssj1: '1.5x', ssj2: '2x', ssj3: '2.8x', ssjgod: '3.2x', ssjblue: '3.8x' };
+  const transColor = player.transformation === 'normal' ? '#fff' : (player.transformation === 'ssj1' ? '#FFD700' : (player.transformation === 'ssj2' ? '#FFFF00' : (player.transformation === 'ssj3' ? '#FFA500' : (player.transformation === 'ssjgod' ? '#FF1493' : '#1E90FF'))));
+  ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(12,70,220,18);
+  ctx.fillStyle = transColor; ctx.font='12px Arial'; ctx.fillText(`${transformLabels[player.transformation || 'normal']} (${transformMults[player.transformation || 'normal']}) • Presiona Q`, 18, 83);
+
+  // mostrar información de enemigos (HP del más cercano o contador)
+  const alive = enemies.filter(e => e && !e._defeated);
+  if(alive.length){
+    const ne = alive[0];
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(WIDTH-230,12,220,18);
+    ctx.fillStyle = '#6fb3ff'; ctx.fillRect(WIDTH-228,14, (ne.hp/ne.maxHp)*216,14);
+    ctx.fillStyle = '#fff'; ctx.font='12px Arial'; ctx.fillText(`${ne.type} HP`, WIDTH-220, 26);
+  } else {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(WIDTH-230,12,220,18);
+    ctx.fillStyle = '#fff'; ctx.font='12px Arial'; ctx.fillText('Enemigos: 0', WIDTH-220, 26);
+  }
+
+  // puntuación (centro superior)
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(WIDTH/2 - 80, 8, 160, 26);
+  ctx.fillStyle = '#fff'; ctx.font='14px Arial'; ctx.fillText(`Puntos: ${score}`, WIDTH/2 - 56, 26);
+
+  // universo actual (arriba a la derecha)
+  const bg = backgrounds[currentBG];
+  ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(WIDTH - 180, 8, 170, 20);
+  ctx.fillStyle = '#fff'; ctx.font='11px Arial'; ctx.fillText(`Universo: ${bg.name}`, WIDTH - 175, 20);
+}
+
+// loop
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(40, now - last);
+  
+  if(gameState === 'menu'){
+    drawMenu();
+  } else if(gameState === 'playing'){
+    update(dt);
+    draw();
+    // chequeo de fin de partida
+    if(player.hp <= 0){ 
+      // procesar muerte una sola vez
+      if(!gameOverHandled){
+        lastScore = score;
+        if(lastScore > highScore){ highScore = lastScore; localStorage.setItem('db_highscore', String(highScore)); }
+        gameOverHandled = true;
+      }
+      ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,WIDTH,HEIGHT); 
+      ctx.fillStyle='#fff'; ctx.font='32px Arial'; ctx.fillText('Has sido derrotado', WIDTH/2-160, HEIGHT/2); 
+      ctx.font='16px Arial'; ctx.fillText(`Puntuación: ${lastScore} • Mejor: ${highScore}`, WIDTH/2-100, HEIGHT/2 + 30);
+      ctx.font='16px Arial'; ctx.fillText('Presiona R para reiniciar y volver al menú', WIDTH/2-170, HEIGHT/2 + 60);
+      if(keys['r']){
+        resetGame();
+      }
+      last = now;
+      requestAnimationFrame(loop);
+      return;
+    }
+  }
+  
+  last = now;
+  requestAnimationFrame(loop);
+}
+
+function drawMenu(){
+  // fondo degradado estilo Dragon Ball Super
+  const grad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+  grad.addColorStop(0, '#1a1a2e');
+  grad.addColorStop(0.5, '#16213e');
+  grad.addColorStop(1, '#0f3460');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  
+  // "sol" rojo en fondo
+  ctx.fillStyle = 'rgba(255, 100, 100, 0.3)';
+  ctx.beginPath();
+  ctx.arc(WIDTH/2, 60, 50, 0, Math.PI*2);
+  ctx.fill();
+  
+  // Título: "DRAGON BALL"
+  ctx.font = 'bold 80px Arial';
+  ctx.fillStyle = '#FFD700';
+  ctx.textAlign = 'center';
+  ctx.fillText('DRAGON BALL', WIDTH/2, 120);
+  
+  // Subtítulo
+  ctx.font = 'bold 32px Arial';
+  ctx.fillStyle = '#FF6B6B';
+  ctx.fillText('SUPER', WIDTH/2, 170);
+  
+  // Descripción
+  ctx.font = '18px Arial';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('Juego 2D Fanmade', WIDTH/2, 220);
+  
+  // botón "JUGAR" con animación
+  const pulse = Math.sin(Date.now() / 300) * 5 + 10;
+  ctx.fillStyle = 'rgba(255, 100, 100, 0.6)';
+  ctx.fillRect(WIDTH/2 - 120 - pulse/2, 280 - pulse/2, 240 + pulse, 80 + pulse);
+  
+  ctx.font = 'bold 36px Arial';
+  ctx.fillStyle = '#FFD700';
+  ctx.fillText('PRESIONA ENTER', WIDTH/2, 330);
+  
+  // Controles
+  ctx.font = '14px Arial';
+  ctx.fillStyle = '#ccc';
+  ctx.textAlign = 'left';
+  ctx.fillText('Controles: A/D (mover) • W/Space (saltar/volar) • Z (disparo) • Q (transformación) • E (golpe melee)', 20, HEIGHT - 40);
+
+  // Mostrar mejor puntuación y última puntuación (si existe)
+  ctx.textAlign = 'center';
+  ctx.font = '18px Arial';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(`Mejor Puntuación: ${highScore}`, WIDTH/2, 380);
+  if(lastScore && lastScore > 0){ ctx.fillText(`Última Puntuación: ${lastScore}`, WIDTH/2, 410); }
+  
+  // Iniciar música del menú si no está sonando
+  if(!menuMusicPlaying){
+    menuMusicPlaying = true;
+    playMenuMusic();
+  }
+}
+
+// Función para reproducir melodía Dragon Ball en el menú
+function playMenuMusic(){
+  const now = audioCtx.currentTime;
+  
+  // Notas en Hz (aproximadas a pentatónica Dragon Ball)
+  const notes = [
+    { freq: 349.23, dur: 0.3 },  // F4
+    { freq: 440.00, dur: 0.3 },  // A4
+    { freq: 523.25, dur: 0.3 },  // C5
+    { freq: 659.25, dur: 0.4 },  // E5
+    { freq: 587.33, dur: 0.3 },  // D5
+    { freq: 440.00, dur: 0.3 },  // A4
+    { freq: 349.23, dur: 0.3 },  // F4
+    { freq: 440.00, dur: 0.4 },  // A4
+  ];
+  
+  let time = now;
+  for(let i = 0; i < 3; i++){ // repetir 3 veces
+    for(const note of notes){
+      playNote(note.freq, time, note.dur);
+      time += note.dur;
+    }
+  }
+}
+
+function playNote(freq, startTime, duration){
+  if(!audioCtx) return;
+  try {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    
+    // envolvente ADSR simple
+    gain.gain.setValueAtTime(0.3, startTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+    
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    osc.start(startTime);
+    osc.stop(startTime + duration);
+  } catch(e) {
+    console.log('Audio no disponible');
+  }
+}
+
+// Reinicia el estado del juego y vuelve al menú (no recarga la página)
+function resetGame(){
+  // limpiar entidades
+  enemies.length = 0;
+  blasts.length = 0;
+  enemyShots.length = 0;
+  seeds.length = 0;
+  // reset jugador
+  player.x = 120; player.y = HEIGHT-110; player.vx = 0; player.vy = 0;
+  player.hp = player.maxHp; player.energy = player.maxEnergy; player.onGround = false; player.flying = false; player._zPressed = false;
+  player._lastBlast = 0; player._lastKame = 0; player._meleeActive = false; player._lastMelee = 0;
+  player.transformation = 'normal'; player._lastTransform = 0;
+  player.alive = true;
+  // reset variables del juego
+  score = 0;
+  enemiesDefeated = 0;
+  currentBG = 0;
+  gameOverHandled = false;
+  // volver al menú para mostrar la última puntuación y el highscore
+  gameState = 'menu';
+  // reproducir música del menú si aplica
+  menuMusicPlaying = false;
+}
+
+requestAnimationFrame(loop);
