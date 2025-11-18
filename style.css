@@ -1,0 +1,12 @@
+:root{
+  --bg1: #0b1223;
+  --bg2: #09223a;
+  --panel: rgba(255,255,255,0.06);
+}
+html,body{height:100%;margin:0;font-family:Segoe UI,Arial,Helvetica,sans-serif;color:#fff;background:linear-gradient(180deg,var(--bg1),var(--bg2));}
+body{display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px}
+h1{font-size:20px;margin:0}
+.help{opacity:.9;margin:0 0 6px 0}
+canvas{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.08));box-shadow:0 6px 20px rgba(0,0,0,0.6);border-radius:6px}
+
+.hud{position:fixed;left:18px;top:18px;color:#fff}
